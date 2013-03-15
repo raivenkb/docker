@@ -1,6 +1,8 @@
 package docker
 
 import (
+	"io/ioutil"
+	"regexp"
 	"text/template"
 )
 
@@ -78,8 +80,8 @@ lxc.mount.entry = devpts {{$ROOTFS}}/dev/pts devpts newinstance,ptmxmode=0666,no
 lxc.mount.entry = {{.SysInitPath}} {{$ROOTFS}}/sbin/init none bind,ro 0 0
 
 # In order to get a working DNS environment, mount bind (ro) the host's /etc/resolv.conf into the container
-lxc.mount.entry = /etc/resolv.conf {{$ROOTFS}}/etc/resolv.conf none bind,ro 0 0
-
+{{$resolvConfOrig := getResolvConfPath}}
+lxc.mount.entry ={{$resolvConfOrig}} {{$ROOTFS}}/etc/resolv.conf none bind,ro 0 0
 
 # drop linux capabilities (apply mainly to the user root in the container)
 lxc.cap.drop = audit_control audit_write mac_admin mac_override mknod setfcap setpcap sys_admin sys_boot sys_module sys_nice sys_pacct sys_rawio sys_resource sys_time sys_tty_config
@@ -95,6 +97,7 @@ lxc.cgroup.memory.memsw.limit_in_bytes = {{$memSwap}}
 `
 
 var LxcTemplateCompiled *template.Template
+var resolvConfPath string
 
 func getMemorySwap(config *Config) int64 {
 	// By default, MemorySwap is set to twice the size of RAM.
@@ -105,11 +108,41 @@ func getMemorySwap(config *Config) int64 {
 	return config.Memory * 2
 }
 
+func getResolvConfPath() string {
+	return resolvConfPath
+}
+
+// If a custom resolv.conf is present in /var/lib/docker, then use it
+// FIXME: Maybe create a /etc/docker/ or /etc/docker.conf?
+// Otherwirse, read the current one and check if it needs to be replaced
+func checkResolvConf() {
+	content, err := ioutil.ReadFile("/etc/resolv.conf")
+	if err != nil {
+		panic("Impossible to read /etc/resolv.conf from host")
+	}
+
+	r, err := regexp.Compile(`127(.[0-9]{0,3}){3}`)
+	if err != nil {
+		panic(err)
+	}
+	// FIXME try to rm -rf /var/lib/docker and start the dockerd
+	if cpy := r.ReplaceAllLiteral(content, []byte("10.0.3.1")); string(cpy) != string(content) {
+		if err := ioutil.WriteFile("/var/lib/docker/resolv.conf", cpy, 0644); err != nil {
+			panic(err)
+		}
+		resolvConfPath = "/var/lib/docker/resolv.conf"
+	} else {
+		resolvConfPath = "/etc/resolv.conf"
+	}
+}
+
 func init() {
 	var err error
 	funcMap := template.FuncMap{
-		"getMemorySwap": getMemorySwap,
+		"getMemorySwap":     getMemorySwap,
+		"getResolvConfPath": getResolvConfPath,
 	}
+	checkResolvConf()
 	LxcTemplateCompiled, err = template.New("lxc").Funcs(funcMap).Parse(LxcTemplate)
 	if err != nil {
 		panic(err)
