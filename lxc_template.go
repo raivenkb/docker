@@ -2,6 +2,7 @@ package docker
 
 import (
 	"io/ioutil"
+	"os"
 	"regexp"
 	"text/template"
 )
@@ -125,8 +126,11 @@ func checkResolvConf() {
 	if err != nil {
 		panic(err)
 	}
-	// FIXME try to rm -rf /var/lib/docker and start the dockerd
+
 	if cpy := r.ReplaceAllLiteral(content, []byte("10.0.3.1")); string(cpy) != string(content) {
+		if err := os.MkdirAll("/var/lib/docker", 0700); err != nil {
+			panic(err)
+		}
 		if err := ioutil.WriteFile("/var/lib/docker/resolv.conf", cpy, 0644); err != nil {
 			panic(err)
 		}
