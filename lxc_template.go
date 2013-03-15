@@ -2,6 +2,7 @@ package docker
 
 import (
 	"io/ioutil"
+	"net"
 	"os"
 	"regexp"
 	"text/template"
@@ -127,7 +128,21 @@ func checkResolvConf() {
 		panic(err)
 	}
 
-	if cpy := r.ReplaceAllLiteral(content, []byte("10.0.3.1")); string(cpy) != string(content) {
+	// FIXME: Find a better way to retrieve the IP of the host?
+	i, err := net.InterfaceByName(networkBridgeIface)
+	if err != nil {
+		panic(err)
+	}
+	a, err := i.Addrs()
+	if err != nil {
+		panic(err)
+	}
+	hostIp, _, err := net.ParseCIDR(a[0].String())
+	if err != nil {
+		panic(err)
+	}
+	if cpy := r.ReplaceAllLiteral(content, []byte(hostIp.String())); string(cpy) != string(content) {
+
 		if err := os.MkdirAll("/var/lib/docker", 0700); err != nil {
 			panic(err)
 		}
@@ -141,6 +156,13 @@ func checkResolvConf() {
 }
 
 func init() {
+	// If we are in init mode, then no need to compile/parse the lxc config
+	// nor the resolv.conf
+	if SelfPath() == "/sbin/init" {
+		SysInit()
+		return
+	}
+
 	var err error
 	funcMap := template.FuncMap{
 		"getMemorySwap":     getMemorySwap,
